@@ -1,6 +1,6 @@
 // These functions have been shamelessly taken from https://github.com/btcsuite/btcd/blob/master/mining.go
 
-package support
+package main
 
 import (
 	"math/rand"
@@ -18,9 +18,9 @@ var coinbaseFlags = "/P2SH/btcd/"
 // signature script of the coinbase transaction of a new block.  In particular,
 // it starts with the block height that is required by version 2 blocks and adds
 // the extra nonce as well as additional coinbase flags.
-func standardCoinbaseScript(nextBlockHeight int64, extraNonce uint64) ([]byte, error) {
+func standardCoinbaseScript(nextBlockHeight int64, extraNonce uint64, msg string) ([]byte, error) {
 	return txscript.NewScriptBuilder().AddInt64(nextBlockHeight).
-		AddUint64(extraNonce).AddData([]byte(coinbaseFlags)).Script()
+		AddUint64(extraNonce).AddData([]byte(msg)).Script()
 }
 
 // createCoinbaseTx returns a coinbase transaction paying an appropriate subsidy
@@ -66,9 +66,9 @@ func createCoinbaseTx(coinbaseScript []byte, nextBlockHeight int64, addr btcutil
 	return btcutil.NewTx(tx), nil
 }
 
-func CreateCoinbaseTx(nextBlockHeight int64, addr btcutil.Address) (*btcutil.Tx, error) {
+func CreateCoinbaseTx(nextBlockHeight int64, addr btcutil.Address, msg string) (*btcutil.Tx, error) {
 	n := uint64(rand.Uint32())
-	script, err := standardCoinbaseScript(nextBlockHeight, n)
+	script, err := standardCoinbaseScript(nextBlockHeight, n, msg)
 	if err != nil {
 		return nil, err
 	}

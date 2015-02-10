@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"io/ioutil"
 	"log"
 	"math/big"
@@ -14,16 +15,14 @@ import (
 	"github.com/PointCoin/btcutil"
 	"github.com/PointCoin/btcwire"
 	"github.com/PointCoin/pointcoind/blockchain"
-
-	"github.com/PointCoin/support"
 )
 
 const (
-	rpcuser = "rpc"
-	rpcpass = "supasecretpassword"
+	rpcuser = "user"
+	rpcpass = "pass"
 	cert    = "/home/ubuntu/.pointcoind/rpc.cert"
 
-	logUpdateSecs    = 5
+	logUpdateSecs    = 10
 	refreshBlockSecs = 15
 )
 
@@ -39,31 +38,23 @@ func main() {
 	// Declare variables to use in our main loop
 	var template *btcjson.GetBlockTemplateResult
 	var block *btcwire.MsgBlock
-	var difficulty *big.Int
-	var hashCounter
+	var difficulty big.Int
 
-	// Get a new block template from pointcoind.
-	template, err = client.GetBlockTemplate(&btcjson.TemplateRequest{})
-	if err != nil {
-		log.Fatal(err)
-	}
+	var hashCounter int
+	var err error
 
-	// Create the header that we will mine.
-	block, err = createBlock(template)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	// Determine the current network difficulty.
-	difficulty = formatDiff(template.Bits)
+	// A channel to reset the block template given some event.
+	var newBlkTemplate chan bool = make(chan bool, 1)
+	newBlkTemplate <- true
 
 	for {
 		select {
-		case <-logOuputTimer.C:
+		case <-logOutputTimer.C:
 			logHashRate(logUpdateSecs, hashCounter)
 			hashCounter = 0
 
 		case <-refreshTimer.C:
+		case <-newBlkTemplate:
 			// Every 15 seconds get a new block template from pointcoind,
 			// create a new block header to mine off of and set the new
 			// difficulty
@@ -99,10 +90,14 @@ func main() {
 			// We use a btcutil block b/c SubmitBlock demands it.
 			err := client.SubmitBlock(btcutil.NewBlock(block), nil)
 			if err != nil {
-				log.Errorf("Block Submission to node failed with: %s\n", err)
+				errStr := fmt.Sprintf("Block Submission to node failed with: %s\n", err)
+				log.Println(errStr)
+				newBlkTemplate <- true
+				continue
 			}
 
 			log.Printf("Block Submitted! Hash:[%s]\n", hash)
+			newBlkTemplate <- true
 		}
 
 	}
@@ -135,7 +130,7 @@ func setupRpcClient() *btcrpcclient.Client {
 	}
 
 	// Test the connection to see if we can really connect
-	_, err := client.GetInfo()
+	_, err = client.GetInfo()
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -153,22 +148,22 @@ func logHashRate(windowsecs int, hashes int) {
 // lessThanDiff returns true if the hash satisifies the target difficulty. That
 // is to say if the hash interpreted as a big integer is less than the required
 // difficulty then return true otherwise return false.
-func lessThanDiff(hash *btcwire.ShaHash, difficulty *big.Int) bool {
+func lessThanDiff(hash btcwire.ShaHash, difficulty big.Int) bool {
 	bigI := blockchain.ShaHashToBig(&hash)
-	return bigI.ShaHashToBig(&hash).Cmp(targetDifficulty) <= 0
+	return bigI.Cmp(&difficulty) <= 0
 }
 
 // foramtDiff converts the current blockchain difficulty from the format provided
 // by a Block Template response to a big integer for use in comparisons
 func formatDiff(bits string) big.Int {
 	// Convert the difficulty bits into a unint32.
-	b, err := strconv.ParseUint(template.Bits, 16, 32)
+	b, err := strconv.ParseUint(bits, 16, 32)
 	if err != nil {
 		log.Fatal(err) // This should not fail, so die horribly if it does
 	}
 
 	// Then into a big.Int
-	return &blockchain.CompactToBig(b)
+	return *blockchain.CompactToBig(uint32(b))
 }
 
 // createBlock creates a new block from the provided block template. The majority
@@ -180,13 +175,18 @@ func createBlock(template *btcjson.GetBlockTemplateResult) (*btcwire.MsgBlock, e
 	a := "PsVSrUSQf72X6GWFQXJPxR7WSAPVRb1gWx"
 	addr, err := btcutil.DecodeAddress(a, &btcnet.MainNetParams)
 
+	// NOTICE
+	msg := "He leadeth me beside the still waters."
+
 	// Use supporting functions to create a CoinbaseTx
-	coinbaseTx, err := support.CreateCoinbaseTx(template.Height+1, addr)
+	coinbaseTx, err := CreateCoinbaseTx(template.Height, addr, msg)
 	if err != nil {
 		return nil, err
 	}
 
+	// NOTICE
 	txs := []*btcutil.Tx{coinbaseTx}
+
 	// The last element in the array is the root.
 	store := blockchain.BuildMerkleTreeStore(txs)
 	// Create a merkleroot from a list of 1 transaction.
